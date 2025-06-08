@@ -8,6 +8,7 @@ import zipfile
 from tensorflow.keras.models import load_model
 import matplotlib.pyplot as plt
 from PIL import Image
+from predictor import predict_from_opencv_image
 
 # Import các hàm từ code gốc của bạn
 # Giả sử bạn đã tạo file predictor.py chứa các hàm cần thiết
@@ -33,6 +34,60 @@ def load_student_codes(uploaded_file):
         st.error(f"Lỗi đọc file: {e}")
         return None
 
+def load_answer_file(uploaded_file):
+    """Đọc file đáp án với định dạng: Câu X,Đáp án"""
+    try:
+        # Đọc nội dung file
+        if uploaded_file.name.endswith('.txt'):
+            content = uploaded_file.read().decode('utf-8')
+        elif uploaded_file.name.endswith('.csv'):
+            # Đọc file CSV nhưng xử lý như text
+            content = uploaded_file.read().decode('utf-8')
+        else:
+            st.error("Chỉ hỗ trợ file TXT hoặc CSV cho đáp án")
+            return []
+        
+        answers = []
+        lines = content.strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):  # Bỏ qua dòng trống và comment
+                continue
+                
+            # Tách theo dấu phẩy
+            parts = line.split(',')
+            if len(parts) >= 2:
+                # Lấy phần đáp án (phần sau dấu phẩy cuối cùng)
+                answer = parts[-1].strip().upper()
+                if answer in ['A', 'B', 'C', 'D']:
+                    answers.append(answer)
+                else:
+                    st.warning(f"Đáp án không hợp lệ trong dòng: {line}")
+            else:
+                # Nếu không có dấu phẩy, coi toàn bộ dòng là đáp án
+                answer = line.strip().upper()
+                if answer in ['A', 'B', 'C', 'D']:
+                    answers.append(answer)
+        
+        return answers
+    except Exception as e:
+        st.error(f"Lỗi đọc file đáp án: {e}")
+        return []
+
+def parse_manual_answers(answer_string):
+    """Xử lý đáp án nhập thủ công"""
+    answers = []
+    # Tách theo dấu phẩy hoặc xuống dòng
+    parts = answer_string.replace('\n', ',').split(',')
+    
+    for part in parts:
+        answer = part.strip().upper()
+        if answer in ['A', 'B', 'C', 'D']:
+            answers.append(answer)
+    
+    return answers
+
 def process_uploaded_images(uploaded_files):
     """Xử lý các file ảnh được upload"""
     images_dict = {}
@@ -47,39 +102,6 @@ def process_uploaded_images(uploaded_files):
         images_dict[filename] = opencv_image
     
     return images_dict
-
-def predict_from_opencv_image(opencv_image, model):
-    """Dự đoán từ opencv image (thay vì file path)"""
-    try:
-        # Chuyển sang grayscale
-        if len(opencv_image.shape) == 3:
-            img = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
-        else:
-            img = opencv_image
-            
-        # Áp dụng các bước xử lý tương tự như trong code gốc
-        blur = cv2.GaussianBlur(img, (5, 5), 0)
-        thresh = cv2.adaptiveThreshold(
-            blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY_INV, 11, 2
-        )
-        
-        # Detect table structure (sử dụng các hàm từ code gốc)
-        mask = detect_table_structure(img, thresh)
-        x_max, y_max, w_max, h_max = find_largest_table(mask)
-        
-        # Extract cells
-        cropped_thresh_img, cropped_origin_img, contours_img = extract_table_cells(
-            img, thresh, x_max, y_max, w_max, h_max
-        )
-        
-        # Process all cells
-        results = process_all_cells(cropped_thresh_img, cropped_origin_img, contours_img, model)
-        
-        return results
-    except Exception as e:
-        st.error(f"Lỗi xử lý ảnh: {e}")
-        return []
 
 def calculate_score(predicted_answers, correct_answers, total_questions=36):
     """Tính điểm dựa trên đáp án đúng"""
@@ -162,20 +184,43 @@ def main():
         
         if answer_input_method == "Nhập thủ công":
             correct_answers_str = st.text_area(
-                "Nhập đáp án (cách nhau bởi dấu phẩy)",
-                placeholder="A,B,C,D,A,B,C,D..."
+                "Nhập đáp án (cách nhau bởi dấu phẩy hoặc xuống dòng)",
+                placeholder="A,B,C,D,A,B,C,D...\nhoặc:\nA\nB\nC\nD..."
             )
             if correct_answers_str:
-                correct_answers = [ans.strip().upper() for ans in correct_answers_str.split(',')]
-                st.success(f"✅ Đã nhập {len(correct_answers)} đáp án")
+                correct_answers = parse_manual_answers(correct_answers_str)
+                if correct_answers:
+                    st.success(f"✅ Đã nhập {len(correct_answers)} đáp án")
+                    # Hiển thị preview
+                    with st.expander("Xem trước đáp án"):
+                        for i, ans in enumerate(correct_answers[:10], 1):  # Hiển thị 10 đáp án đầu
+                            st.text(f"Câu {i}: {ans}")
+                        if len(correct_answers) > 10:
+                            st.text(f"... và {len(correct_answers) - 10} câu khác")
+                else:
+                    st.error("❌ Không tìm thấy đáp án hợp lệ")
+                    correct_answers = []
             else:
                 correct_answers = []
         else:
-            answer_file = st.file_uploader("Upload file đáp án", type=['txt', 'csv'])
+            answer_file = st.file_uploader(
+                "Upload file đáp án", 
+                type=['txt', 'csv'],
+                help="File có định dạng: 'Câu X,Đáp án' trên mỗi dòng"
+            )
             if answer_file:
-                content = answer_file.read().decode('utf-8')
-                correct_answers = [ans.strip().upper() for ans in content.replace('\n', ',').split(',') if ans.strip()]
-                st.success(f"✅ Đã tải {len(correct_answers)} đáp án")
+                correct_answers = load_answer_file(answer_file)
+                if correct_answers:
+                    st.success(f"✅ Đã tải {len(correct_answers)} đáp án")
+                    # Hiển thị preview
+                    with st.expander("Xem trước đáp án đã tải"):
+                        for i, ans in enumerate(correct_answers[:10], 1):  # Hiển thị 10 đáp án đầu
+                            st.text(f"Câu {i}: {ans}")
+                        if len(correct_answers) > 10:
+                            st.text(f"... và {len(correct_answers) - 10} câu khác")
+                else:
+                    st.error("❌ Không đọc được đáp án từ file")
+                    correct_answers = []
             else:
                 correct_answers = []
     

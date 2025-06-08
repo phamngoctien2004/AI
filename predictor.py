@@ -1,102 +1,9 @@
-# %%
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 import cv2
-from sklearn.model_selection import train_test_split
-from sklearn.utils import shuffle
-from keras.models import Sequential
-from keras.layers import Dense, Flatten, Conv2D, MaxPool2D, Dropout
-from keras.optimizers import SGD, Adam
-from tensorflow.keras.optimizers import SGD
-from keras import optimizers
-from keras.callbacks import ReduceLROnPlateau, EarlyStopping
-
-# %%
-word_dict = {
-    0:'A',1:'B',2:'C',3:'D',4:'E',5:'F',6:'G',7:'H',8:'I',9:'J',10:'K',11:'L',12:'M',13:'N',14:'O',15:'P',16:'Q',17:'R',18:'S',19:'T',20:'U',21:'V',22:'W',23:'X', 24:'Y',25:'Z'
-}
-
-# %%
-import tensorflow as tf
-import tensorflow_datasets as tfds
-
-# Tải EMNIST Letters
-(ds_train_full, ds_test), ds_info = tfds.load(
-    'emnist/letters',
-    split=['train', 'test'],
-    shuffle_files=True,
-    as_supervised=True,
-    with_info=True
-)
-
-# Xử lý ảnh phù hợp CNN
-def pre_process(image, label):
-    image = tf.transpose(image, perm=[1, 0, 2])        # Xoay ảnh về đúng chiều
-    image = tf.cast(image, tf.float32) / 255.0         # Chuẩn hóa pixel về [0,1]
-    label = label - 1                                   # Nhãn từ 1-26 → 0-25
-    return image, label
-# Áp dụng xử lý cho full train dataset
-ds_train_full = ds_train_full.map(pre_process, num_parallel_calls=tf.data.AUTOTUNE)
-
-# Tách ra validation set (10% train) bằng cách lấy phần đầu làm val, phần sau làm train
-val_size = int(0.1 * ds_info.splits['train'].num_examples)
-
-ds_val = ds_train_full.take(val_size).batch(128).prefetch(tf.data.AUTOTUNE)
-ds_train = ds_train_full.skip(val_size).batch(128).prefetch(tf.data.AUTOTUNE)
-
-ds_test = ds_test.map(pre_process).batch(128).prefetch(tf.data.AUTOTUNE)
-
-
-# %%
-model = tf.keras.Sequential([
-    tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
-    tf.keras.layers.BatchNormalization(),
-    tf.keras.layers.MaxPooling2D((2, 2)),
-
-    tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
-    tf.keras.layers.BatchNormalization(),
-    tf.keras.layers.MaxPooling2D((2, 2)),
-
-    tf.keras.layers.Conv2D(128, (3, 3), activation='relu'),
-    tf.keras.layers.BatchNormalization(),
-    tf.keras.layers.MaxPooling2D((2, 2)),
-
-    tf.keras.layers.Flatten(),
-    tf.keras.layers.Dense(256, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001)),
-    tf.keras.layers.Dropout(0.4),
-    tf.keras.layers.Dense(26, activation='softmax')
-])
-
-
-model.compile(
-    optimizer='adam',
-    loss='sparse_categorical_crossentropy',
-    metrics=['accuracy']
-)
-
-model.summary()
-
-
-# %%
-model.fit(ds_train, validation_data=ds_test, epochs=10)
+import numpy as np
 import matplotlib.pyplot as plt
+from tensorflow.keras.models import load_model
 
-class_names = [chr(i) for i in range(ord('a'), ord('z')+1)]
-
-for images, labels in ds_test.take(1):
-    preds = model.predict(images[:5])
-    for i in range(5):
-        plt.imshow(images[i].numpy().squeeze(), cmap='gray')
-        pred_label = class_names[tf.argmax(preds[i])]
-        true_label = class_names[labels[i]]
-        plt.title(f"Dự đoán: {pred_label}, Thật: {true_label}")
-        plt.axis('off')
-        plt.show()
-model.save("du_doan_chu.h5")
-
-
-# %%
+    
 def pre_process_image2(img):
     """
     Tiền xử lý ảnh để chuẩn bị cho việc nhận diện chữ số/chữ cái
@@ -182,14 +89,14 @@ def pre_process_image2(img):
     return digit_img
 
 
-# %%
-def predict2(image_array, model):
+def predict2(image_array, model, show_plot=False):
     """
     Dự đoán ký tự A, B, C, D từ ảnh đã được tiền xử lý
     
     Args:
         image_array: Ảnh đã được tiền xử lý (28x28) hoặc (1, 28, 28) hoặc (28, 28, 1)
         model: Model đã được train
+        show_plot: Có hiển thị biểu đồ không (mặc định False cho web app)
     
     Returns:
         predicted_char: Ký tự dự đoán ('A', 'B', 'C', 'D' hoặc 'EMPTY')
@@ -213,7 +120,6 @@ def predict2(image_array, model):
     total_pixels = image_array.size
     
     if non_zero_pixels < total_pixels * 0.02:  # Nếu ít hơn 2% pixel có giá trị
-        print("Ảnh quá trống, không thể nhận diện")
         return 'EMPTY'
     
     try:
@@ -254,55 +160,30 @@ def predict2(image_array, model):
         if confidence < 0.3:  # Nếu độ tin cậy quá thấp
             predicted_char = 'UNCERTAIN'
         
-        # Hiển thị kết quả (có thể comment để tăng tốc độ)
-        plt.figure(figsize=(6, 4))
-        plt.subplot(1, 2, 1)
-        plt.imshow(image_array.squeeze(), cmap='gray')
-        plt.title(f"Dự đoán: {predicted_char}\nConfidence: {confidence:.3f}")
-        plt.axis('off')
-        
-        plt.subplot(1, 2, 2)
-        if predictions.shape[1] == 4:
-            labels = ['A', 'B', 'C', 'D']
-            plt.bar(labels, predictions[0])
-        else:
-            plt.bar(['A', 'B', 'C', 'D'], limited_probs)
-        plt.title('Confidence Scores')
-        plt.ylabel('Probability')
-        plt.tight_layout()
-        plt.show()
+        # Hiển thị kết quả chỉ khi được yêu cầu (cho debugging)
+        if show_plot:
+            plt.figure(figsize=(6, 4))
+            plt.subplot(1, 2, 1)
+            plt.imshow(image_array.squeeze(), cmap='gray')
+            plt.title(f"Dự đoán: {predicted_char}\nConfidence: {confidence:.3f}")
+            plt.axis('off')
+            
+            plt.subplot(1, 2, 2)
+            if predictions.shape[1] == 4:
+                labels = ['A', 'B', 'C', 'D']
+                plt.bar(labels, predictions[0])
+            else:
+                plt.bar(['A', 'B', 'C', 'D'], limited_probs)
+            plt.title('Confidence Scores')
+            plt.ylabel('Probability')
+            plt.tight_layout()
+            plt.show()
         
         return predicted_char
         
     except Exception as e:
         print(f"Lỗi trong quá trình dự đoán: {e}")
         return 'ERROR'
-
-# %% [markdown]
-# Xử lí ảnh import vào
-
-# %%
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-from tensorflow.keras.models import load_model
-
-
-def load_and_preprocess_image(image_path):
-    """
-    Tải và tiền xử lý ảnh đầu vào
-    """
-    img = cv2.imread(image_path, 0)
-    blur = cv2.GaussianBlur(img, (5, 5), 0)
-    thresh = cv2.adaptiveThreshold(
-        blur,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        11,
-        2
-    )
-    return img, thresh
 
 
 def detect_table_structure(img, thresh):
@@ -425,45 +306,25 @@ def extract_character_from_cell(cell_img, contours):
     return None
 
 
-def visualize_cell_processing(cell_idx, original_img, thresh_img, cropped_char, processed_img):
+def process_all_cells(cropped_thresh_img, cropped_origin_img, contours_img, model, verbose=False):
     """
-    Hiển thị quá trình xử lý của một ô
-    """
-    plt.figure(figsize=(12, 4))
+    Xử lý tất cả các ô và nhận diện ký tự
     
-    plt.subplot(1, 4, 1)
-    plt.imshow(original_img, cmap='gray')
-    plt.title(f'Original Cell {cell_idx}')
-    plt.axis('off')
+    Args:
+        cropped_thresh_img: Danh sách ảnh threshold
+        cropped_origin_img: Danh sách ảnh gốc
+        contours_img: Danh sách contours
+        model: Model AI
+        verbose: Có in chi tiết không (mặc định False cho web app)
     
-    plt.subplot(1, 4, 2)
-    plt.imshow(thresh_img, cmap='gray')
-    plt.title(f'Threshold Cell {cell_idx}')
-    plt.axis('off')
-    
-    if cropped_char is not None:
-        plt.subplot(1, 4, 3)
-        plt.imshow(cropped_char, cmap='gray')
-        plt.title(f'Cropped Cell {cell_idx}')
-        plt.axis('off')
-    
-    plt.subplot(1, 4, 4)
-    plt.imshow(processed_img, cmap='gray')
-    plt.title(f'Processed Cell {cell_idx}')
-    plt.axis('off')
-    
-    plt.tight_layout()
-    plt.show()
-
-
-def process_all_cells(cropped_thresh_img, cropped_origin_img, contours_img, model):
-    """
-    Phiên bản đã sửa của process_all_cells
+    Returns:
+        results: Danh sách kết quả nhận diện
     """
     results = []
     
     for i, contour_img in enumerate(contours_img):
-        print(f"\n=== Xử lý Cell {i} ===")
+        if verbose:
+            print(f"\n=== Xử lý Cell {i} ===")
         
         try:
             # Trích xuất ký tự từ ô
@@ -471,70 +332,115 @@ def process_all_cells(cropped_thresh_img, cropped_origin_img, contours_img, mode
             
             # Nếu không tìm thấy ký tự rõ ràng, sử dụng toàn bộ ô
             if character_img is None:
-                print(f"Không tìm thấy ký tự rõ ràng trong Cell {i}, xử lý toàn bộ cell")
+                if verbose:
+                    print(f"Không tìm thấy ký tự rõ ràng trong Cell {i}, xử lý toàn bộ cell")
                 character_img = cropped_origin_img[i]
             
             # Tiền xử lý ảnh
             processed_img = pre_process_image2(character_img)
             
             # In thông tin chi tiết
-            print(f"Processed image shape: {processed_img.shape}")
-            print(f"Pixel value range: [{processed_img.min():.3f}, {processed_img.max():.3f}]")
-            print(f"Non-zero pixels: {np.count_nonzero(processed_img)}/{processed_img.size}")
+            if verbose:
+                print(f"Processed image shape: {processed_img.shape}")
+                print(f"Pixel value range: [{processed_img.min():.3f}, {processed_img.max():.3f}]")
+                print(f"Non-zero pixels: {np.count_nonzero(processed_img)}/{processed_img.size}")
             
             # Dự đoán với function đã fix
             if np.count_nonzero(processed_img) > 5:  # Giảm threshold từ 10 xuống 5
-                char = predict2(processed_img, model)
+                char = predict2(processed_img, model, show_plot=False)
                 results.append(char)
-                print(f"--> Đã nhận diện: {char} - Cell {i}")
+                if verbose:
+                    print(f"--> Đã nhận diện: {char} - Cell {i}")
             else:
                 results.append("EMPTY")
-                print(f"--> Cell trống - Cell {i}")
+                if verbose:
+                    print(f"--> Cell trống - Cell {i}")
             
         except Exception as e:
-            print(f"Lỗi xử lý Cell {i}: {e}")
-            import traceback
-            traceback.print_exc()
+            if verbose:
+                print(f"Lỗi xử lý Cell {i}: {e}")
+                import traceback
+                traceback.print_exc()
             results.append("ERROR")
         
-        print("-" * 60)
+        if verbose:
+            print("-" * 60)
     
     return results
 
-def main():
+
+def predict_from_opencv_image(opencv_image, model):
     """
-    Hàm chính thực hiện toàn bộ quy trình
+    Dự đoán từ opencv image (thay vì file path)
+    Hàm chính để xử lý ảnh từ web app
     """
-    # Tải và tiền xử lý ảnh
-    img, thresh = load_and_preprocess_image("tn.jpg")
-    
-    # Phát hiện cấu trúc bảng
-    mask = detect_table_structure(img, thresh)
-    
-    # Tìm bảng lớn nhất
-    x_max, y_max, w_max, h_max = find_largest_table(mask)
-    
-    # Trích xuất bảng
-    table = img[y_max:y_max+h_max, x_max:x_max+w_max]
-    
-    # Trích xuất các ô
-    cropped_thresh_img, cropped_origin_img, contours_img = extract_table_cells(
-        img, thresh, x_max, y_max, w_max, h_max
-    )
-    
-    # Tải model
-    model = load_model('emnist_cnn_model.h5')
-    
-    # Xử lý tất cả các ô và nhận diện
-    results = process_all_cells(cropped_thresh_img, cropped_origin_img, contours_img, model)
-    
-    print(f"Tổng số chữ số được trích xuất: {len(results)}")
-    print(f"Kết quả nhận diện: {results}")
-    
-    return results
+    try:
+        # Chuyển sang grayscale
+        if len(opencv_image.shape) == 3:
+            img = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
+        else:
+            img = opencv_image
+            
+        # Áp dụng các bước xử lý tương tự như trong code gốc
+        blur = cv2.GaussianBlur(img, (5, 5), 0)
+        thresh = cv2.adaptiveThreshold(
+            blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY_INV, 11, 2
+        )
+        
+        # Detect table structure
+        mask = detect_table_structure(img, thresh)
+        x_max, y_max, w_max, h_max = find_largest_table(mask)
+        
+        # Extract cells
+        cropped_thresh_img, cropped_origin_img, contours_img = extract_table_cells(
+            img, thresh, x_max, y_max, w_max, h_max
+        )
+        
+        # Process all cells (không verbose để tránh spam log)
+        results = process_all_cells(cropped_thresh_img, cropped_origin_img, contours_img, model, verbose=False)
+        
+        return results
+    except Exception as e:
+        print(f"Lỗi xử lý ảnh: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+# Hàm để test độc lập (có thể comment khi không cần)
+def main_test(image_path="tn.jpg", model_path="emnist_cnn_model.h5"):
+    """
+    Hàm test cho việc phát triển và debug
+    """
+    try:
+        # Load image
+        img = cv2.imread(image_path, 0)
+        if img is None:
+            print(f"Không thể đọc ảnh: {image_path}")
+            return []
+            
+        # Load model
+        model = load_model(model_path)
+        
+        # Convert to opencv format
+        opencv_image = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        
+        # Predict
+        results = predict_from_opencv_image(opencv_image, model)
+        
+        print(f"Tổng số chữ số được trích xuất: {len(results)}")
+        print(f"Kết quả nhận diện: {results}")
+        
+        return results
+        
+    except Exception as e:
+        print(f"Lỗi trong main_test: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
 if __name__ == "__main__":
-    results = main()
-
-
+    # Test function - chỉ chạy khi file được thực thi trực tiếp
+    results = main_test()
